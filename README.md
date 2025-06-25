@@ -8,19 +8,16 @@
 1. Установите Python 3.9+
 2. Скачайте файлы:
   
-   git clone https://github.com/ваш_логин/название_репозитория.git
+   https://github.com/SofiaNosar/Mars_sim.git
    
 3. Установите зависимости:
  
-  https://github.com/SofiaNosar/Mars_sim.git
+     pip install numpy matplotlib scipy
+   
    
 4. Запустите основной скрипт:
   
    python main.py
    
-## Структура кода
-- main.py — основной алгоритм
-- pulsars_data.py — параметры пульсаров
-- plots/ — графики траекторий
 
 > Разработано для защиты проекта [Применение пульсаров в космической навигации] (2025)

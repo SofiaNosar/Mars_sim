@@ -1,0 +1,86 @@
+import numpy as np
+from scipy.optimize import least_squares
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+
+# Константы
+c = 299792.458  # скорость света, км/с
+AU = 149.6e6    # 1 астрономическая единица, км
+
+# Данные пульсаров (координаты в килопарсеках + DM)
+pulsars = [
+    {"name": "PSR B1937+21", "position": np.array([-0.87, 3.44, 0.92]), "dm": 71.039},
+    {"name": "PSR J0437-4715", "position": np.array([0.12, -0.05, -0.03]), "dm": 2.6},
+    {"name": "PSR B1821-24", "position": np.array([-0.45, -4.12, -1.33]), "dm": 120.5}
+]
+
+# Преобразование координат в км (1 кпк = 3.086e16 км)
+for psr in pulsars:
+    psr["position"] *= 3.086e16
+
+# Функция коррекции дисперсии
+def correct_dispersion(toa, dm, freq_band=(1.4, 1.6)):
+    """Корректирует TOA на дисперсионную задержку."""
+    nu_min, nu_max = freq_band  # ГГц
+    return toa - 4.15 * dm * (1/nu_min**2 - 1/nu_max**2) * 1e-3  # в секундах
+
+# Алгоритм определения положения с дисперсией
+def solve_position(toa_observed):
+    def residuals(r):
+        errors = []
+        for i, psr in enumerate(pulsars):
+            dist = np.linalg.norm(r - psr["position"])
+            t_pred = dist / c
+            t_corrected = correct_dispersion(toa_observed[i], psr["dm"])
+            errors.append(t_corrected - t_pred)
+        return np.array(errors)
+    
+    return least_squares(residuals, x0=[1.2*AU, 0, 0]).x
+
+# Генерация траектории (Земля -> Марс)
+def generate_trajectory(days=200, points=100):
+    t = np.linspace(0, days, points)
+    x = AU * (1 + 0.5 * t/days)  # От 1.0 AU до 1.5 AU
+    y = AU * 0.1 * np.sin(2*np.pi*t/days)  # Колебания
+    z = np.zeros_like(t)  # Без движения по Z
+    return np.column_stack([x, y, z])
+
+# Основные расчёты
+trajectory = generate_trajectory()
+toa = np.array([[np.linalg.norm(pos - psr["position"])/c for psr in pulsars] 
+              for pos in trajectory])
+np.random.seed(42)
+toa_noisy = toa + np.random.normal(0, 100e-9, toa.shape)
+estimated_positions = np.array([solve_position(toa_day) for toa_day in toa_noisy])
+
+# Визуализация 
+plt.figure(figsize=(14, 7))
+plt.plot(trajectory[:,0]/AU, trajectory[:,1]/AU, 
+         label='Реальная траектория', linewidth=2, color='blue')
+plt.plot(estimated_positions[:,0]/AU, estimated_positions[:,1]/AU, 
+         '--', label='Навигационное решение', linewidth=2, color='orange')  # Оранжевый пунктир
+plt.xlabel('X (а.е.)', fontsize=12)
+plt.ylabel('Y (а.е.)', fontsize=12)
+plt.title('Траектория Земля-Марс', fontsize=14)
+plt.legend(fontsize=12)
+plt.grid(True, linestyle='--', alpha=0.7)
+plt.savefig('mars_navigation_final.png', dpi=300, bbox_inches='tight')
+
+# 3D-график
+fig = plt.figure(figsize=(12, 10))
+ax = fig.add_subplot(111, projection='3d')
+ax.plot(trajectory[:,0], trajectory[:,1], trajectory[:,2], 
+        label='Реальная траектория', linewidth=2)
+ax.plot(estimated_positions[:,0], estimated_positions[:,1], estimated_positions[:,2], 
+        '--', label='Навигационное решение', linewidth=2, color='orange')
+ax.set_xlabel('X (км)', fontsize=12)
+ax.set_ylabel('Y (км)', fontsize=12)
+ax.set_zlabel('Z (км)', fontsize=12)
+ax.legend(fontsize=12)
+plt.savefig('mars_3d_final.png', dpi=300, bbox_inches='tight')
+
+# Вывод статистики
+errors = np.linalg.norm(trajectory - estimated_positions, axis=1)
+print(f"Средняя ошибка: {np.mean(errors)/1000:.1f} тыс. км")
+print(f"Максимальная ошибка: {np.max(errors)/1000:.1f} тыс. км")
+print(f"Дисперсионная задержка для PSR B1821-24: {4.15*120.5*(1/1.4**2-1/1.6**2):.2f} мс")

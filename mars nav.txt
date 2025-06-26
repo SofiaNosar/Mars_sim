@@ -6,26 +6,27 @@ from mpl_toolkits.mplot3d import Axes3D
 # Константы
 c = 299792.458  # скорость света, км/с
 AU = 149.6e6    # 1 астрономическая единица, км
+kpc_to_km = 3.086e16  # килопарсек в километрах
 
-# Данные пульсаров (координаты в килопарсеках + DM)
+# Данные пульсаров (координаты в кпк + DM)
 pulsars = [
     {"name": "PSR B1937+21", "position": np.array([-0.87, 3.44, 0.92]), "dm": 71.039},
     {"name": "PSR J0437-4715", "position": np.array([0.12, -0.05, -0.03]), "dm": 2.6},
     {"name": "PSR B1821-24", "position": np.array([-0.45, -4.12, -1.33]), "dm": 120.5}
 ]
 
-# Преобразование координат в км (1 кпк = 3.086e16 км)
+# Преобразование координат в км
 for psr in pulsars:
-    psr["position"] *= 3.086e16
+    psr["position"] *= kpc_to_km
 
-# Функция коррекции дисперсии
+# Функция коррекции дисперсии 
 def correct_dispersion(toa, dm, freq_band=(1.4, 1.6)):
     """Корректирует TOA на дисперсионную задержку."""
     nu_min, nu_max = freq_band  # ГГц
     return toa - 4.15 * dm * (1/nu_min**2 - 1/nu_max**2) * 1e-3  # в секундах
 
-# Алгоритм определения положения с дисперсией
-def solve_position(toa_observed):
+# Алгоритм определения положения 
+def solve_position(toa_observed, pulsars):
     def residuals(r):
         errors = []
         for i, psr in enumerate(pulsars):
@@ -37,7 +38,7 @@ def solve_position(toa_observed):
     
     return least_squares(residuals, x0=[1.2*AU, 0, 0]).x
 
-# Генерация траектории (Земля -> Марс)
+# Генерация траектории 
 def generate_trajectory(days=200, points=100):
     t = np.linspace(0, days, points)
     x = AU * (1 + 0.5 * t/days)  # От 1.0 AU до 1.5 AU
@@ -45,28 +46,67 @@ def generate_trajectory(days=200, points=100):
     z = np.zeros_like(t)  # Без движения по Z
     return np.column_stack([x, y, z])
 
-# Основные расчёты
+
+def analyze_dm_impact(pulsars, dm_range=(0, 200), num_points=20):
+    """Анализирует, как мера дисперсии (DM) влияет на ошибку позиционирования."""
+    trajectory = generate_trajectory()
+    true_pos = trajectory[50]  # Берём точку в середине траектории
+    
+    # Истинные TOA без шумов
+    true_toa = np.array([np.linalg.norm(true_pos - psr["position"])/c for psr in pulsars])
+    
+    dms = np.linspace(dm_range[0], dm_range[1], num_points)
+    errors = []
+    
+    for test_dm in dms:
+        # Меняем DM у первого пульсара (PSR B1937+21)
+        modified_pulsars = pulsars.copy()
+        modified_pulsars[0]["dm"] = test_dm
+        
+        # Добавляем шум (100 нс)
+        noisy_toa = true_toa + np.random.normal(0, 100e-9, len(true_toa))
+        
+        # Решаем задачу навигации
+        estimated_pos = solve_position(noisy_toa, modified_pulsars)
+        error = np.linalg.norm(estimated_pos - true_pos)
+        errors.append(error/1000)  # Переводим в тыс. км
+    
+    return dms, errors
+
+# Построение графика
+dms, errors = analyze_dm_impact(pulsars)
+
+plt.figure(figsize=(10, 6))
+plt.plot(dms, errors, 'b-o', linewidth=2, label='Ошибка позиционирования')
+plt.xlabel('Мера дисперсии (DM) первого пульсара', fontsize=12)
+plt.ylabel('Ошибка позиционирования (тыс. км)', fontsize=12)
+plt.title('Влияние меры дисперсии (DM) на точность навигации', fontsize=14)
+plt.grid(True, linestyle='--', alpha=0.7)
+plt.legend()
+plt.savefig('dm_impact_plot.png', dpi=300, bbox_inches='tight')
+plt.show()
+
+
 trajectory = generate_trajectory()
 toa = np.array([[np.linalg.norm(pos - psr["position"])/c for psr in pulsars] 
               for pos in trajectory])
 np.random.seed(42)
 toa_noisy = toa + np.random.normal(0, 100e-9, toa.shape)
-estimated_positions = np.array([solve_position(toa_day) for toa_day in toa_noisy])
+estimated_positions = np.array([solve_position(toa_day, pulsars) for toa_day in toa_noisy])
 
-# Визуализация 
+# 2D траектория
 plt.figure(figsize=(14, 7))
 plt.plot(trajectory[:,0]/AU, trajectory[:,1]/AU, 
          label='Реальная траектория', linewidth=2, color='blue')
-plt.plot(estimated_positions[:,0]/AU, estimated_positions[:,1]/AU, 
-         '--', label='Навигационное решение', linewidth=2, color='orange')  # Оранжевый пунктир
+plt.plot(estimated_positions[:,0]/AU, estimated_positions[:,1]/AU,'--', label='Навигационное решение', linewidth=2, color='orange')
 plt.xlabel('X (а.е.)', fontsize=12)
 plt.ylabel('Y (а.е.)', fontsize=12)
-plt.title('Траектория Земля-Марс', fontsize=14)
+plt.title('Траектория Земля-Марс с коррекцией дисперсии', fontsize=14)
 plt.legend(fontsize=12)
 plt.grid(True, linestyle='--', alpha=0.7)
-plt.savefig('mars_navigation_final.png', dpi=300, bbox_inches='tight')
+plt.savefig('mars_trajectory.png', dpi=300, bbox_inches='tight')
 
-# 3D-график
+# 3D траектория
 fig = plt.figure(figsize=(12, 10))
 ax = fig.add_subplot(111, projection='3d')
 ax.plot(trajectory[:,0], trajectory[:,1], trajectory[:,2], 
@@ -77,10 +117,49 @@ ax.set_xlabel('X (км)', fontsize=12)
 ax.set_ylabel('Y (км)', fontsize=12)
 ax.set_zlabel('Z (км)', fontsize=12)
 ax.legend(fontsize=12)
-plt.savefig('mars_3d_final.png', dpi=300, bbox_inches='tight')
+plt.savefig('mars_3d_trajectory.png', dpi=300, bbox_inches='tight')
 
-# Вывод статистики
-errors = np.linalg.norm(trajectory - estimated_positions, axis=1)
-print(f"Средняя ошибка: {np.mean(errors)/1000:.1f} тыс. км")
-print(f"Максимальная ошибка: {np.max(errors)/1000:.1f} тыс. км")
-print(f"Дисперсионная задержка для PSR B1821-24: {4.15*120.5*(1/1.4**2-1/1.6**2):.2f} мс")
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.optimize import least_squares
+
+# Константы
+c = 299792.458  # км/с
+AU = 149.6e6    # 1 а.е. в км
+
+# Данные пульсаров (координаты в км и DM)
+pulsars = [
+    {"name": "PSR B1937+21", "position": np.array([-0.87, 3.44, 0.92]) * 3.086e16, "dm": 71.039},
+    {"name": "PSR J0437-4715", "position": np.array([0.12, -0.05, -0.03]) * 3.086e16, "dm": 2.6},
+    {"name": "PSR B1821-24", "position": np.array([-0.45, -4.12, -1.33]) * 3.086e16, "dm": 120.5}
+]
+
+# Упрощённая модель: ошибка = (DM * расстояние до пульсара) / 10^6
+def calculate_error(psr, true_pos):
+    distance = np.linalg.norm(true_pos - psr["position"])  # Расстояние до пульсара
+    error = (psr["dm"] * distance) / 1e6  
+    return error / 1000  # Переводим в тыс. км
+
+# Создаём график
+plt.figure(figsize=(12, 8))
+true_pos = np.array([1.5 * AU, 0.1 * AU, 0])  
+
+for i, psr in enumerate(pulsars):
+    error = calculate_error(psr, true_pos)
+    plt.scatter(
+        psr["dm"], error,
+        s=200,
+        color=['blue', 'green', 'red'][i],
+        marker=['o', 's', '^'][i],
+        label=f'{psr["name"]} (DM={psr["dm"]})'
+    )
+
+# Настройки графика
+plt.xlabel('Мера дисперсии (DM)', fontsize=14)
+plt.ylabel('Ошибка позиционирования (тыс. км)', fontsize=14)
+plt.title('Зависимость ошибки от DM и положения пульсара', fontsize=16)
+plt.grid(True, linestyle='--')
+plt.legend(fontsize=12)
+plt.savefig('final_dm_impact.png', dpi=300, bbox_inches='tight')
+plt.show()
+https://github.com/SofiaNosar/Mars_sim.git
